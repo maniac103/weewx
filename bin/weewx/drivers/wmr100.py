@@ -144,7 +144,7 @@ class WMR100TCPPort:
 
     def close(self):
         try:
-            self.socket.shutdown()
+            self.socket.shutdown(socket.SHUT_RDWR)
         except socket.error:
             pass
         try:
