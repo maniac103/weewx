@@ -158,7 +158,7 @@ class WMR100TCPPort:
         while True:
             try:
                 if not self.socket:
-                    open()
+                    self.open()
                 data = self.socket.recv(128)
                 if len(data) == 0:
                     raise socket.error("Connection closed")
@@ -172,7 +172,7 @@ class WMR100TCPPort:
                 if nerrors > self.max_tries:
                     syslog.syslog(syslog.LOG_ERR, "wmr100: Max retries exceeded while fetching socket data")
                     raise weewx.RetriesExceeded("Max retries exceeded while fetching socket data")
-                close()
+                self.close()
                 time.sleep(self.wait_before_retry)
 
 class WMR100(weewx.drivers.AbstractDevice):
