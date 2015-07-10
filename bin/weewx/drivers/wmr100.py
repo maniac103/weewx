@@ -329,7 +329,8 @@ class WMR100(weewx.drivers.AbstractDevice):
         # Because the WMR does not offer anything like bucket tips, we must
         # calculate it by looking for the change in total rain. Of course, this
         # won't work for the very first rain packet.
-        _record['rain'] = (_record['totalRain']-self.last_totalRain) if self.last_totalRain is not None else None
+        if self.last_totalRain and _record['totalRain'] >= self.last_totalRain:
+            _record['rain'] = _record['totalRain']-self.last_totalRain
         self.last_totalRain = _record['totalRain']
         return _record
 
