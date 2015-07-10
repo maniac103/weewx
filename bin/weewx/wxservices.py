@@ -6,6 +6,8 @@
 
 """Services specific to weather."""
 
+import syslog
+
 import weedb
 import weewx.units
 import weewx.engine
@@ -38,10 +40,10 @@ class StdWXCalculate(weewx.engine.StdService):
         'dewpoint',
         'inDewpoint',
         'rainRate',
-        'maxsolarrad',
+        'maxSolarRad',
         'cloudbase',
         'humidex',
-        'apptemp',
+        'appTemp',
 #        'beaufort',
         'ET',
         'windrun',
@@ -51,16 +53,20 @@ class StdWXCalculate(weewx.engine.StdService):
         """Initialize the calculation service.  Sample configuration:
 
         [StdWXCalculate]
-            rain_period = 900
-            et_period = 3600
             ignore_zero_wind = True
-            atc = 0.8
+            rain_period = 900           # for rain rate
+            et_period = 3600            # for evapotranspiration
+            wind_height = 2.0           # for evapotranspiration
+            atc = 0.8                   # for solar radiation RS
+            nfac = 2                    # for solar radiation Bras
+            max_delta_12h = 1800
             [[Calculations]]
                 windchill = hardware
                 heatindex = prefer_hardware
                 dewpoint = software
             [[Algorithms]]
                 altimeter = aaASOS
+                maxSolarRad = RS
         """
         super(StdWXCalculate, self).__init__(engine, config_dict)
 
@@ -76,10 +82,12 @@ class StdWXCalculate(weewx.engine.StdService):
         self.atc = float(svc_dict.get('atc', 0.8))
         if self.atc < 0.7:
             self.atc = 0.7
-        if self.atc > 0.91:
+        elif self.atc > 0.91:
             self.atc = 0.91
         # height above ground at which wind is measured, in meters
         self.wind_height = float(svc_dict.get('wind_height', 2.0))
+        # Time window to accept a record 12 hours ago:
+        self.max_delta_12h = int(svc_dict.get('max_delta_12h', 1800))
 
         # find out which calculations should be performed
         # we recognize only the names in our dispatch list; others are ignored
@@ -222,10 +230,16 @@ class StdWXCalculate(weewx.engine.StdService):
         # ...then divide by the period and scale to an hour
         data['rainRate'] = 3600 * rainsum / self.rain_period
 
-    def calc_maxsolarrad(self, data, data_type):
-        data['maxsolarrad'] = weewx.wxformulas.solar_rad_RS(
-            self.latitude, self.longitude, self.altitude_m, data['dateTime'],
-            self.atc)
+    def calc_maxSolarRad(self, data, data_type):
+        algo = self.algorithms.get('maxSolarRad', 'RS')
+        if algo == 'Bras':
+            data['maxSolarRad'] = weewx.wxformulas.solar_rad_Bras(
+                self.latitude, self.longitude, self.altitude_m,
+                data['dateTime'], self.nfac)
+        else:
+            data['maxSolarRad'] = weewx.wxformulas.solar_rad_RS(
+                self.latitude, self.longitude, self.altitude_m,
+                data['dateTime'], self.atc)
 
     def calc_cloudbase(self, data, data_type):
         if 'outTemp' in data and 'outHumidity' in data:        
@@ -241,9 +255,9 @@ class StdWXCalculate(weewx.engine.StdService):
         else:
             data['humidex'] = None
 
-    def calc_apptemp(self, data, data_type):
+    def calc_appTemp(self, data, data_type):
         if 'outTemp' in data and 'outHumidity' in data and 'windSpeed' in data:
-            data['apptemp'] = weewx.wxformulas.apptempF(
+            data['appTemp'] = weewx.wxformulas.apptempF(
                 data['outTemp'], data['outHumidity'], data['windSpeed'])
         else:
             data['apptemp'] = None
@@ -286,6 +300,9 @@ class StdWXCalculate(weewx.engine.StdService):
                     T_max, T_min, rad_avg, wind_avg,
                     self.wind_height, self.latitude,
                     data['dateTime'])
+        except ValueError, e:
+            weeutil.weeutil.log_traceback()
+            syslog.syslog(syslog.LOG_ERR, "wxservices: Calculation of evapotranspiration failed: %s" % e)
         except weedb.DatabaseError:
             pass
 
@@ -334,7 +351,7 @@ class StdWXCalculate(weewx.engine.StdService):
         if ts12 != self.ts_12h_ago:
             # We're in a new interval. Hit the database to get the temperature
             dbmanager = self.engine.db_binder.get_manager('wx_binding')
-            record = dbmanager.getRecord(ts12)
+            record = dbmanager.getRecord(ts12, max_delta=self.max_delta_12h)
             if record is None:
                 # Nothing in the database. Set temperature to None.
                 self.temperature_12h_ago = None
